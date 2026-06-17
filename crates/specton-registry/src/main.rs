@@ -731,16 +731,35 @@ async fn head_manifest(
     .await?;
     let store_path = StorePath::from(path);
 
+    // A missing manifest must return 404 (ManifestUnknown), not 500. With a
+    // lazy object store, `get()` can return Ok for an absent object and the
+    // not-found only surfaces at `.bytes()`; map not-found at BOTH stages to
+    // ManifestUnknown and keep genuine storage failures as 500. (docker push
+    // HEADs the new manifest digest before upload — a 500 here aborts it.)
     let data = state
         .store
         .get(&store_path)
         .await
-        .map_err(|_| RegistryError::ManifestUnknown {
-            reference: params.reference.clone(),
+        .map_err(|e| {
+            if is_store_not_found(&e) {
+                RegistryError::ManifestUnknown {
+                    reference: params.reference.clone(),
+                }
+            } else {
+                RegistryError::Storage(e.to_string())
+            }
         })?
         .bytes()
         .await
-        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+        .map_err(|e| {
+            if is_store_not_found(&e) {
+                RegistryError::ManifestUnknown {
+                    reference: params.reference.clone(),
+                }
+            } else {
+                RegistryError::Storage(e.to_string())
+            }
+        })?;
 
     let digest = sha256_digest(&data);
     let media_type = detect_manifest_media_type(&data);
