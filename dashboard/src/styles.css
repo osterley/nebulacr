@@ -40,10 +40,14 @@
   --primary-tint:  #e6f4f2;
   --primary-ring:  #26948c;
 
-  /* Severity ink — dot + text color. Soft backgrounds are mixed from these. */
+  /* Severity ink — dot + text color. Soft backgrounds are mixed from these.
+     An ordinal ramp: maroon → red → orange descends by lightness so the
+     order reads even in grayscale; low/unknown are deliberately recessive
+     (slate/gray). Validated for adjacent separation with the dataviz script;
+     identity is never colour-alone (every use carries a text label). */
   --sev-critical:  #9f1239;
-  --sev-high:      #c2410c;
-  --sev-medium:    #b45309;
+  --sev-high:      #dc2626;
+  --sev-medium:    #ea580c;
   --sev-low:       #475569;
   --sev-unknown:   #64748b;
 
@@ -371,6 +375,68 @@ a:hover { color: var(--primary-hover); }
 .verdict.pass .verdict-badge { color: var(--ok); }
 .verdict.fail { border-left-color: var(--bad); background: var(--bad-tint); }
 .verdict.fail .verdict-badge { color: var(--bad); }
+/* Fixable pill sits on the right of the verdict — the actionable number. */
+.verdict-fixable {
+  margin-left: auto; text-align: right; flex-shrink: 0;
+  font-size: 12px; color: var(--ink-muted);
+}
+.verdict-fixable b { display: block; font-size: 20px; color: var(--primary); line-height: 1.1; }
+
+/* --------------------------------------------------------------------------
+   Severity distribution meter — posture at a glance. Segments are ordered
+   critical→low with a 2px surface gap between them (so adjacent fills stay
+   distinct even for CVD viewers), and each is directly labelled with its
+   count in the legend below — colour is never the sole signal.
+-------------------------------------------------------------------------- */
+.sevbar-wrap { margin-bottom: 22px; }
+.sevbar {
+  display: flex; gap: 2px; height: 12px; border-radius: 99px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--line);
+  padding: 2px;
+}
+.sevbar span { display: block; height: 100%; border-radius: 99px; min-width: 3px; transition: flex-grow .3s ease; }
+.sevbar .critical { background: var(--sev-critical); }
+.sevbar .high     { background: var(--sev-high); }
+.sevbar .medium   { background: var(--sev-medium); }
+.sevbar .low      { background: var(--sev-low); }
+.sevbar .unknown  { background: var(--sev-unknown); }
+.sevbar-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px;
+  font-size: 12px; color: var(--ink-muted);
+}
+.sevbar-legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.sevbar-legend .item.zero { opacity: .45; }
+.sevbar-legend .swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.sevbar-legend b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------
+   Copy-to-clipboard button (CVE IDs, digests)
+-------------------------------------------------------------------------- */
+.copy {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; border: 0; cursor: pointer; padding: 2px 4px;
+  color: var(--ink-faint); border-radius: 6px; font-family: var(--font-mono);
+  font-size: inherit; transition: color .12s, background .12s;
+}
+.copy:hover { color: var(--primary); background: var(--surface-2); }
+.copy svg { width: 13px; height: 13px; }
+.copy.copied { color: var(--ok); }
+
+/* --------------------------------------------------------------------------
+   Suggested searches (empty-state chips that invite action)
+-------------------------------------------------------------------------- */
+.suggest { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.suggest button {
+  font-family: var(--font-mono); font-size: 12.5px;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-muted);
+  padding: 5px 12px; border-radius: 99px; cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.suggest button:hover { border-color: var(--primary-ring); color: var(--primary); background: var(--surface); }
+
+/* CVSS score cell — small, tabular, right-aligned */
+td.cvss, th.cvss { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cvss-val { font-family: var(--font-mono); font-size: 12px; }
 
 /* --------------------------------------------------------------------------
    Status pill (live scan connection)

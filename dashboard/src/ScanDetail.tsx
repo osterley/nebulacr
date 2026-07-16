@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { fetchLiveScan, ScanResult, Vulnerability } from './api';
-import { Header, SevBadge, SEVERITIES } from './ui';
+import { Header, SevBadge, SEVERITIES, SeverityBar, sortBySeverity, CopyButton } from './ui';
 
 // Scan drill-down: subscribes to /v2/ws/scan/{digest} and streams results.
 // Panels are ordered by what an operator decides on first: the policy verdict
@@ -42,13 +42,19 @@ export function ScanDetail() {
 
   const visible: Vulnerability[] = useMemo(() => {
     const vs = result?.vulnerabilities ?? [];
-    if (filter === 'all') return vs;
-    return vs.filter((v) => v.severity.toLowerCase() === filter);
+    const filtered = filter === 'all' ? vs : vs.filter((v) => v.severity.toLowerCase() === filter);
+    return sortBySeverity(filtered); // triage order: severity desc, then CVSS
   }, [result, filter]);
 
   const total = result
     ? SEVERITIES.reduce((n, k) => n + (result.summary[k] ?? 0), 0)
     : 0;
+
+  // How many findings have a fix available — the number an operator can act on.
+  const fixable = useMemo(
+    () => (result?.vulnerabilities ?? []).filter((v) => v.fixed_version && !v.suppressed).length,
+    [result],
+  );
 
   const statusClass =
     status === 'completed' ? 'done'
@@ -72,6 +78,7 @@ export function ScanDetail() {
           <div className="crumb">
             <span>scan</span>
             <code>{digest.length > 24 ? `${digest.slice(0, 24)}…` : digest || '—'}</code>
+            {digest && <CopyButton value={digest} label="digest" />}
           </div>
           <h1>Scan report</h1>
           {result && (
@@ -92,8 +99,16 @@ export function ScanDetail() {
             {result.policy_evaluation.reason && (
               <span className="verdict-reason">{result.policy_evaluation.reason}</span>
             )}
+            {fixable > 0 && (
+              <span className="verdict-fixable">
+                <b>{fixable}</b>
+                fixable now
+              </span>
+            )}
           </div>
         )}
+
+        {result && <SeverityBar summary={result.summary} />}
 
         {result ? (
           <>
@@ -132,6 +147,7 @@ export function ScanDetail() {
                       <tr>
                         <th>ID</th>
                         <th>Severity</th>
+                        <th className="cvss">CVSS</th>
                         <th>Package</th>
                         <th>Installed</th>
                         <th>Fixed</th>
@@ -144,6 +160,11 @@ export function ScanDetail() {
                         <tr key={`${v.id}-${v.package}`} className={v.suppressed ? 'suppressed' : ''}>
                           <td className="id"><code>{v.id}</code></td>
                           <td><SevBadge severity={v.severity} /></td>
+                          <td className="cvss">
+                            {typeof v.cvss_score === 'number'
+                              ? <span className="cvss-val">{v.cvss_score.toFixed(1)}</span>
+                              : <span className="muted">—</span>}
+                          </td>
                           <td>{v.package}</td>
                           <td><code>{v.installed_version}</code></td>
                           <td>{v.fixed_version ? <code>{v.fixed_version}</code> : <span className="muted">—</span>}</td>

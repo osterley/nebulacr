@@ -101,3 +101,73 @@ export function SearchIcon() {
     </svg>
   );
 }
+
+/** Copy `value` to the clipboard, flashing a check for feedback. */
+export function CopyButton({ value, label }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard blocked (e.g. insecure context) — no-op */
+    }
+  }
+  return (
+    <button
+      className={`copy ${copied ? 'copied' : ''}`}
+      onClick={copy}
+      title={copied ? 'Copied' : `Copy ${label ?? value}`}
+      aria-label={`Copy ${label ?? value}`}
+    >
+      {copied ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m5 12 5 5L20 7" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="11" height="11" rx="2" />
+          <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+/** Triage order for the findings table: severity desc, then CVSS desc. */
+const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 };
+export function sortBySeverity<T extends { severity: string; cvss_score?: number }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const d = SEV_RANK[sevKey(a.severity)] - SEV_RANK[sevKey(b.severity)];
+    return d !== 0 ? d : (b.cvss_score ?? 0) - (a.cvss_score ?? 0);
+  });
+}
+
+/** Stacked severity meter + directly-labelled legend (colour is never alone). */
+export function SeverityBar({ summary }: { summary: Record<Severity, number> }) {
+  const total = SEVERITIES.reduce((n, k) => n + (summary[k] ?? 0), 0);
+  if (total === 0) return null;
+  return (
+    <div className="sevbar-wrap">
+      <div className="sevbar" role="img" aria-label={SEVERITIES.map((k) => `${summary[k] ?? 0} ${k}`).join(', ')}>
+        {SEVERITIES.map((k) => {
+          const n = summary[k] ?? 0;
+          if (n === 0) return null;
+          return <span key={k} className={k} style={{ flexGrow: n }} title={`${n} ${k}`} />;
+        })}
+      </div>
+      <div className="sevbar-legend">
+        {SEVERITIES.map((k) => {
+          const n = summary[k] ?? 0;
+          return (
+            <span key={k} className={`item ${n === 0 ? 'zero' : ''}`}>
+              <span className="swatch" style={{ background: `var(--sev-${k})` }} />
+              <b>{n}</b> {k}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

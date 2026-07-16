@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { getApiKey, searchCves, setApiKey, CveHit } from './api';
-import { Header, SevBadge, SearchIcon } from './ui';
+import { Header, SevBadge, SearchIcon, CopyButton } from './ui';
+
+// Common starting points so the empty state invites action instead of
+// staring back blankly.
+const SUGGESTIONS = ['openssl', 'log4j', 'curl', 'glibc', 'CVE-2024'];
 
 // Home: connect an API key (in the steel bar), then search the scanner's own
 // CVE database to sanity-check population. Results render as scannable cards.
@@ -16,13 +20,12 @@ export function App() {
     setApiKey(key);
   }, [key]);
 
-  async function runSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!query.trim()) return;
+  async function doSearch(q: string) {
+    if (!q.trim()) return;
     setLoading(true);
     setSearched(true);
     try {
-      const resp = await searchCves({ q: query, limit: '25' });
+      const resp = await searchCves({ q, limit: '25' });
       setHits(resp.results);
     } catch (err) {
       console.error(err);
@@ -30,6 +33,16 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function runSearch(e: React.FormEvent) {
+    e.preventDefault();
+    doSearch(query);
+  }
+
+  function runSuggestion(s: string) {
+    setQuery(s);
+    doSearch(s);
   }
 
   const conn = (
@@ -101,6 +114,7 @@ export function App() {
               <article key={h.id} className="result">
                 <div className="result-top">
                   <code>{h.id}</code>
+                  <CopyButton value={h.id} label="CVE ID" />
                   <SevBadge severity={h.severity} />
                   {typeof h.cvss_score === 'number' && (
                     <span className="chip tabular">CVSS {h.cvss_score.toFixed(1)}</span>
@@ -142,6 +156,11 @@ export function App() {
               <SearchIcon />
               <h3>Search the vulnerability feed</h3>
               <p>Enter a keyword, package, or advisory ID above to query the ingested CVE data.</p>
+              <div className="suggest">
+                {SUGGESTIONS.map((s) => (
+                  <button key={s} onClick={() => runSuggestion(s)}>{s}</button>
+                ))}
+              </div>
             </div>
           </div>
         )}
