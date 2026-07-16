@@ -1,0 +1,113 @@
+# =============================================================================
+# spectoncr deploy — receiving workflow for the OPS / DEPLOY repo.
+#
+# COPY THIS FILE into the deploy repo as `.github/workflows/deploy.yml`.
+# It is intentionally NOT active inside spectoncr itself — spectoncr only
+# *sends* the repository_dispatch (see .github/workflows/docker-publish.yml).
+#
+# What it does: on a `spectoncr-image-published` dispatch (or a manual run),
+# `helm upgrade --install` the spectoncr release from the published OCI chart,
+# pinning the exact image tag/digest carried in the dispatch payload.
+#
+# Prerequisites in the DEPLOY repo:
+#   secrets.KUBECONFIG        base64-encoded kubeconfig for the target cluster
+#   secrets.GHCR_TOKEN        (optional) PAT with read:packages, only if the
+#                             chart/images are private. Public → omit login.
+# See deploy/ci-templates/README.md for the full setup.
+# =============================================================================
+name: Deploy spectoncr
+
+on:
+  repository_dispatch:
+    types: [spectoncr-image-published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy (e.g. a short SHA or version)"
+        required: true
+        default: "latest"
+      environment:
+        description: "Target environment (namespace + values-<env>.yaml)"
+        required: true
+        default: "acc"
+        type: choice
+        options: [acc, prod]
+
+env:
+  RELEASE_NAME: spectoncr
+  CHART_REF: oci://ghcr.io/spectonio/charts/spectoncr
+  # Pin a chart version here for reproducible rollouts, or leave empty to
+  # take the latest published chart.
+  CHART_VERSION: ""
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event.client_payload.tag || github.event.inputs.tag }}
+    runs-on: ubuntu-latest
+    # Coordinates from the dispatch payload, with manual-run fallbacks.
+    env:
+      IMAGE_TAG: ${{ github.event.client_payload.tag || github.event.inputs.tag }}
+      ENVIRONMENT: ${{ github.event.client_payload.environment || github.event.inputs.environment }}
+      IMAGE_DIGEST: ${{ github.event.client_payload.digest }}
+      SOURCE_SHA: ${{ github.event.client_payload.sha }}
+    environment: ${{ github.event.client_payload.environment || github.event.inputs.environment }}
+
+    steps:
+      - name: Show what we're deploying
+        run: |
+          echo "Image tag : ${IMAGE_TAG}"
+          echo "Digest    : ${IMAGE_DIGEST:-<none>}"
+          echo "Env       : ${ENVIRONMENT}"
+          echo "Source SHA: ${SOURCE_SHA:-<manual>}"
+          test -n "${IMAGE_TAG}" || { echo "::error::no image tag to deploy"; exit 1; }
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Set up kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Verify cluster connectivity
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      # Only needed if the OCI chart/images are private.
+      - name: Log in to GHCR
+        if: ${{ secrets.GHCR_TOKEN != '' }}
+        run: echo "${{ secrets.GHCR_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Helm upgrade
+        run: |
+          VERSION_ARG=""
+          [ -n "${CHART_VERSION}" ] && VERSION_ARG="--version ${CHART_VERSION}"
+
+          # A per-run annotation forces pods to roll even when the rendered
+          # spec is otherwise unchanged, so a new image is always pulled.
+          ROLL_ID="$(date -u +%Y%m%dT%H%M%SZ)-${IMAGE_TAG}"
+
+          # The chart drives both the registry and auth services from the
+          # same image, so pin both tags to the dispatched build.
+          helm upgrade --install "${RELEASE_NAME}" "${CHART_REF}" ${VERSION_ARG} \
+            --namespace "${ENVIRONMENT}" --create-namespace \
+            --set "registry.image.tag=${IMAGE_TAG}" \
+            --set "auth.image.tag=${IMAGE_TAG}" \
+            --set "registry.podAnnotations.spectoncr\.io/rolled-at=${ROLL_ID}" \
+            --set "auth.podAnnotations.spectoncr\.io/rolled-at=${ROLL_ID}" \
+            --take-ownership \
+            --wait --timeout 10m
+
+      - name: Verify rollout
+        run: |
+          kubectl get pods -n "${ENVIRONMENT}" -l app.kubernetes.io/part-of=spectoncr -o wide
+          kubectl rollout status deploy -n "${ENVIRONMENT}" -l app.kubernetes.io/part-of=spectoncr --timeout=5m || true
+
+      - name: Diagnose on failure
+        if: failure()
+        run: |
+          NS="${ENVIRONMENT}"
+          echo "=== events ==="; kubectl get events -n "$NS" --sort-by=.lastTimestamp | tail -40 || true
+          echo "=== pods ===";   kubectl get pods -n "$NS" -l app.kubernetes.io/part-of=spectoncr -o wide || true
