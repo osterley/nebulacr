@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { getApiKey, searchCves, setApiKey, CveHit } from './api';
+import { Header, SevBadge, SearchIcon } from './ui';
 
-// Home view: API-key prompt + live CVE search box that the operator can
-// use to sanity-check the own-DB population. Scan drill-down moves to
-// /scan/{digest} so links can be shared as-is.
+// Home: connect an API key (in the steel bar), then search the scanner's own
+// CVE database to sanity-check population. Results render as scannable cards.
+// Scan drill-down moves to /scan/{digest} so links share as-is.
 export function App() {
   const [key, setKey] = useState(getApiKey() || '');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<CveHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
 
   useEffect(() => {
     setApiKey(key);
@@ -17,70 +18,139 @@ export function App() {
 
   async function runSearch(e: React.FormEvent) {
     e.preventDefault();
+    if (!query.trim()) return;
     setLoading(true);
+    setSearched(true);
     try {
       const resp = await searchCves({ q: query, limit: '25' });
       setHits(resp.results);
     } catch (err) {
       console.error(err);
+      setHits([]);
     } finally {
       setLoading(false);
     }
   }
 
+  const conn = (
+    <div className="conn" title={key ? 'API key set' : 'No API key — some queries may be rejected'}>
+      <span className={`conn-dot ${key ? 'on' : ''}`} aria-hidden="true" />
+      <input
+        type="password"
+        value={key}
+        onChange={(e) => setKey(e.target.value)}
+        placeholder="API key (nck_…)"
+        aria-label="API key"
+      />
+    </div>
+  );
+
   return (
-    <main>
-      <header className="topbar">
-        <h1>SpectonCR</h1>
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="API key (nck_…)"
-          aria-label="API key"
-        />
-      </header>
+    <div className="shell">
+      <Header right={conn} />
 
-      <section>
-        <form onSubmit={runSearch}>
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="CVE search: keyword, package, or id"
-          />
-          <button type="submit" disabled={loading}>
-            Search
-          </button>
-        </form>
+      <main className="page">
+        <div className="page-head">
+          <h1>Vulnerability database</h1>
+          <p>
+            Search the CVEs SpectonCR has ingested — by keyword, package, or advisory ID —
+            to confirm your feeds are populated before you rely on a scan verdict.
+          </p>
+        </div>
 
-        <ul className="results">
-          {hits.map((h) => (
-            <li key={h.id}>
-              <code>{h.id}</code>
-              <span className={`sev ${(h.severity || 'unknown').toLowerCase()}`}>
-                {h.severity || 'UNK'}
-              </span>
-              <span>{h.summary}</span>
-              <div className="affected">
-                {h.affected.slice(0, 3).map((a, i) => (
-                  <span key={i}>
-                    <code>{a.ecosystem}:{a.package}</code>
-                    {a.fixed ? ` → ${a.fixed}` : ''}
-                  </span>
-                ))}
+        <div className="card rule-top" style={{ marginBottom: 22 }}>
+          <div className="card-body">
+            <form className="search" onSubmit={runSearch}>
+              <div className="field">
+                <SearchIcon />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="e.g. openssl, CVE-2024-… , log4j"
+                  aria-label="CVE search"
+                />
               </div>
-            </li>
-          ))}
-        </ul>
-      </section>
+              <button type="submit" className="btn btn-primary" disabled={loading}>
+                {loading ? 'Searching…' : 'Search'}
+              </button>
+            </form>
+          </div>
+        </div>
 
-      <footer>
-        <p>
-          Scan drill-down: open <Link to="/scan/sha256:…">/scan/&lt;digest&gt;</Link> to
-          watch a live scan over WebSocket.
+        {searched && !loading && hits.length > 0 && (
+          <p className="muted" style={{ margin: '0 0 12px', fontSize: 12.5 }}>
+            {hits.length} match{hits.length === 1 ? '' : 'es'}
+          </p>
+        )}
+
+        {loading && (
+          <div className="results" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="result">
+                <div className="skeleton" style={{ height: 15, width: '38%' }} />
+                <div className="skeleton" style={{ height: 12, width: '80%', marginTop: 12 }} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!loading && hits.length > 0 && (
+          <div className="results">
+            {hits.map((h) => (
+              <article key={h.id} className="result">
+                <div className="result-top">
+                  <code>{h.id}</code>
+                  <SevBadge severity={h.severity} />
+                  {typeof h.cvss_score === 'number' && (
+                    <span className="chip tabular">CVSS {h.cvss_score.toFixed(1)}</span>
+                  )}
+                  {h.source && <span className="result-src">{h.source}</span>}
+                </div>
+                {h.summary && <p className="result-sum">{h.summary}</p>}
+                {h.affected.length > 0 && (
+                  <div className="result-affected">
+                    {h.affected.slice(0, 4).map((a, i) => (
+                      <span key={i} className="chip">
+                        {a.ecosystem}:{a.package}
+                        {a.fixed ? <span className="fix"> → {a.fixed}</span> : ''}
+                      </span>
+                    ))}
+                    {h.affected.length > 4 && (
+                      <span className="chip muted">+{h.affected.length - 4} more</span>
+                    )}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+
+        {searched && !loading && hits.length === 0 && (
+          <div className="card">
+            <div className="empty">
+              <SearchIcon />
+              <h3>No matches</h3>
+              <p>Nothing in the database matched “{query}”. Try a package name or a CVE ID.</p>
+            </div>
+          </div>
+        )}
+
+        {!searched && !loading && (
+          <div className="card">
+            <div className="empty">
+              <SearchIcon />
+              <h3>Search the vulnerability feed</h3>
+              <p>Enter a keyword, package, or advisory ID above to query the ingested CVE data.</p>
+            </div>
+          </div>
+        )}
+
+        <p className="footnote">
+          Live scan drill-down — open <code>/scan/&lt;digest&gt;</code> to watch a scan stream over
+          WebSocket, with the severity breakdown and policy verdict.
         </p>
-      </footer>
-    </main>
+      </main>
+    </div>
   );
 }
