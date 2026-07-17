@@ -33,10 +33,29 @@ jobs:
         uses: azure/setup-helm@v4
 
       - name: Set up kubeconfig
+        env:
+          # Optional override for the API-server host. The KUBECONFIG secret
+          # bakes in whichever control-plane node it was generated against
+          # (e.g. k3s0); when that node is down or retired, point every
+          # cluster entry at a reachable peer via this repo variable
+          # (e.g. K3S_API_HOST=k3s1.workstation.co.uk) without regenerating
+          # the secret. Unset → the secret is used verbatim.
+          K3S_API_HOST: ${{ vars.K3S_API_HOST }}
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
+
+          if [ -n "$K3S_API_HOST" ]; then
+            echo "Overriding API-server host → https://${K3S_API_HOST}:6443"
+            # Rewrite the server for every cluster in the kubeconfig, keeping
+            # the port/scheme. The k3s serving cert must include this host in
+            # its TLS-SANs (default k3s installs list every server node), or
+            # kubectl will fail with an x509 hostname mismatch.
+            for c in $(kubectl config get-clusters | tail -n +2); do
+              kubectl config set-cluster "$c" --server="https://${K3S_API_HOST}:6443"
+            done
+          fi
 
       - name: Verify cluster connectivity
         run: |
