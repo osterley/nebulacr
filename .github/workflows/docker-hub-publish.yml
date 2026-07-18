@@ -25,6 +25,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history so `git describe` can find tags
+
+      - name: Build metadata
+        id: bmeta
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(git describe --tags --match 'v[0-9]*' 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+          echo "time=$(date -u +%Y-%m-%dT%H:%MZ)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -83,6 +92,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            SPECTONCR_VERSION=${{ steps.bmeta.outputs.version }}
+            SPECTONCR_BUILD_HASH=${{ steps.bmeta.outputs.sha }}
+            SPECTONCR_BUILD_TIME=${{ steps.bmeta.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
