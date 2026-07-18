@@ -997,10 +997,12 @@ pub async fn dashboard_html(State(state): State<DashboardState>) -> Response {
     // the Docker runtime stage) so the footer reflects the actual image — and
     // so a new commit SHA never invalidates the compile cache. Falls back to
     // the crate version / "dev" for local runs.
+    // From the git tag this reads e.g. "v0.3.1" verbatim; the crate-version
+    // fallback is given a matching "v" prefix so the footer is consistent.
     let version = std::env::var("SPECTONCR_VERSION")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
     let build_hash = std::env::var("SPECTONCR_BUILD_HASH")
         .ok()
         .filter(|s| !s.is_empty())
@@ -1447,7 +1449,7 @@ tr:hover {{ background: var(--surface2); }}
 </div>
 
 <div class="footer">
-    SpectonCR Registry v{version} &middot; build {build_hash}{build_time}
+    SpectonCR Registry {version} &middot; build {build_hash}{build_time}
     &mdash; Prometheus endpoint at <a href="/metrics" style="color:var(--accent)">/metrics</a>
     &bull; Auto-refresh: <select onchange="setupAutoRefresh(this.value)" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px;">
         <option value="0">Off</option>
