@@ -10,6 +10,10 @@ on:
         description: "Image tag override (default: edge)"
         required: false
         default: ""
+      platforms:
+        description: "Target platforms (default amd64-only; set multi-arch for public arm64 releases)"
+        required: false
+        default: "linux/amd64"
 
 env:
   DOCKERHUB_REPO: ${{ secrets.DOCKER_HUB_USERNAME }}/spectoncr
@@ -89,7 +93,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          # amd64-only by default: the target clusters are amd64, and emulating
+          # arm64 under QEMU turned a ~8-min build into ~2h. Pass a multi-arch
+          # value via workflow_dispatch `platforms` for public arm64 releases.
+          platforms: ${{ github.event.inputs.platforms || 'linux/amd64' }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
