@@ -50,9 +50,9 @@ RUN rm -rf crates/specton-common/src crates/specton-auth/src crates/specton-regi
 # Copy the actual source code
 COPY crates/ crates/
 
-# Build the real binaries (embed git SHA as build hash)
-ARG SPECTONCR_BUILD_HASH=dev
-ENV SPECTONCR_BUILD_HASH=${SPECTONCR_BUILD_HASH}
+# Build the real binaries. Build metadata (version / SHA / time) is injected
+# in the runtime stage instead of here, so a new commit SHA does NOT invalidate
+# this expensive compile layer.
 RUN cargo build --release --bin specton-auth --bin specton-registry --bin specton-scanner
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
@@ -81,6 +81,16 @@ COPY --from=builder /build/target/release/specton-scanner  /usr/local/bin/specto
 
 # Ensure binaries are executable
 RUN chmod +x /usr/local/bin/specton-auth /usr/local/bin/specton-registry /usr/local/bin/specton-scanner
+
+# Build metadata surfaced in the dashboard footer, read at runtime. Setting
+# these in the runtime stage (not the builder) keeps the compile cache intact
+# across commits — only these tiny final layers rebuild when the values change.
+ARG SPECTONCR_VERSION=dev
+ARG SPECTONCR_BUILD_HASH=dev
+ARG SPECTONCR_BUILD_TIME=
+ENV SPECTONCR_VERSION=${SPECTONCR_VERSION} \
+    SPECTONCR_BUILD_HASH=${SPECTONCR_BUILD_HASH} \
+    SPECTONCR_BUILD_TIME=${SPECTONCR_BUILD_TIME}
 
 # Switch to non-root user
 USER spectoncr

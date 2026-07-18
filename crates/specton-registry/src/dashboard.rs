@@ -993,6 +993,24 @@ pub async fn dashboard_html(State(state): State<DashboardState>) -> Response {
     let uptime = state.start_time.elapsed().as_secs();
     let sys_metrics = collect_system_metrics();
 
+    // Build info surfaced in the footer, read at RUNTIME from env (injected in
+    // the Docker runtime stage) so the footer reflects the actual image — and
+    // so a new commit SHA never invalidates the compile cache. Falls back to
+    // the crate version / "dev" for local runs.
+    let version = std::env::var("SPECTONCR_VERSION")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    let build_hash = std::env::var("SPECTONCR_BUILD_HASH")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "dev".to_string());
+    let build_time = std::env::var("SPECTONCR_BUILD_TIME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|t| format!(" &middot; built {t}"))
+        .unwrap_or_default();
+
     // Collect HA status
     let (ha_enabled, ha_local_primary, ha_regions) = match &state.failover_manager {
         Some(fm) => {
@@ -1429,7 +1447,7 @@ tr:hover {{ background: var(--surface2); }}
 </div>
 
 <div class="footer">
-    SpectonCR Registry v{version} (build {build_hash})
+    SpectonCR Registry v{version} &middot; build {build_hash}{build_time}
     &mdash; Prometheus endpoint at <a href="/metrics" style="color:var(--accent)">/metrics</a>
     &bull; Auto-refresh: <select onchange="setupAutoRefresh(this.value)" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px;">
         <option value="0">Off</option>
@@ -1780,8 +1798,9 @@ function filterTable() {{
         } else {
             ""
         },
-        version = env!("CARGO_PKG_VERSION"),
-        build_hash = option_env!("SPECTONCR_BUILD_HASH").unwrap_or("dev"),
+        version = version,
+        build_hash = build_hash,
+        build_time = build_time,
     );
 
     (
