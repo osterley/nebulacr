@@ -1,0 +1,115 @@
+# =============================================================================
+# spectoncr pull-based image auto-deploy (acc)
+#
+# Why pull-based: the k3s API is firewalled, so GitHub-hosted runners can't
+# reach it to push a deploy. The cluster CAN reach Docker Hub outbound, so we
+# invert the flow — a small in-cluster CronJob polls Docker Hub for the current
+# `bwalia/spectoncr:latest` manifest digest and, when it changes, rolls the
+# registry + auth Deployments (which pull `:latest` under pullPolicy: Always).
+#
+# Security: no inbound access, no self-hosted runner (unsafe on a public repo),
+# no third-party account. RBAC is scoped to get/patch the two Deployments in
+# the `acc` namespace only. Remove with `kubectl delete -f image-updater.yaml`.
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spectoncr-image-updater
+  namespace: acc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spectoncr-image-updater
+  namespace: acc
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spectoncr-image-updater
+  namespace: acc
+subjects:
+  - kind: ServiceAccount
+    name: spectoncr-image-updater
+    namespace: acc
+roleRef:
+  kind: Role
+  name: spectoncr-image-updater
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spectoncr-image-updater
+  namespace: acc
+  labels:
+    app.kubernetes.io/part-of: spectoncr
+    app.kubernetes.io/component: image-updater
+spec:
+  schedule: "*/5 * * * *"          # poll every 5 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: spectoncr
+            app.kubernetes.io/component: image-updater
+        spec:
+          serviceAccountName: spectoncr-image-updater
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: updater
+              image: alpine/k8s:1.30.2      # ships kubectl + curl + jq
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - name: REPO
+                  value: "bwalia/spectoncr"
+                - name: NS
+                  value: "acc"
+                - name: DEPLOYMENTS
+                  value: "spectoncr-registry spectoncr-auth"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # 1. Current :latest manifest digest on Docker Hub.
+                  TOKEN=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO}:pull" | jq -r .token)
+                  HUB=$(curl -fsS -o /dev/null -D - \
+                    -H "Authorization: Bearer ${TOKEN}" \
+                    -H "Accept: application/vnd.oci.image.index.v1+json" \
+                    -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+                    -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                    "https://registry-1.docker.io/v2/${REPO}/manifests/latest" \
+                    | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
+                  if [ -z "${HUB}" ]; then echo "could not resolve Hub digest"; exit 1; fi
+                  echo "Docker Hub ${REPO}:latest = ${HUB}"
+
+                  # 2. Roll any deployment whose last-seen digest differs.
+                  for d in ${DEPLOYMENTS}; do
+                    CUR=$(kubectl -n "${NS}" get deploy "$d" \
+                      -o jsonpath='{.spec.template.metadata.annotations.spectoncr\.io/image-digest}' 2>/dev/null || true)
+                    if [ "${CUR}" = "${HUB}" ]; then
+                      echo "$d up to date"; continue
+                    fi
+                    echo "$d: ${CUR:-<none>} -> ${HUB}  (rolling)"
+                    kubectl -n "${NS}" patch deployment "$d" --type merge -p \
+                      "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"spectoncr.io/image-digest\":\"${HUB}\",\"spectoncr.io/rolled-at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}}}}"
+                  done

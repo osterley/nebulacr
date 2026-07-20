@@ -993,6 +993,26 @@ pub async fn dashboard_html(State(state): State<DashboardState>) -> Response {
     let uptime = state.start_time.elapsed().as_secs();
     let sys_metrics = collect_system_metrics();
 
+    // Build info surfaced in the footer, read at RUNTIME from env (injected in
+    // the Docker runtime stage) so the footer reflects the actual image — and
+    // so a new commit SHA never invalidates the compile cache. Falls back to
+    // the crate version / "dev" for local runs.
+    // From the git tag this reads e.g. "v0.3.1" verbatim; the crate-version
+    // fallback is given a matching "v" prefix so the footer is consistent.
+    let version = std::env::var("SPECTONCR_VERSION")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
+    let build_hash = std::env::var("SPECTONCR_BUILD_HASH")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "dev".to_string());
+    let build_time = std::env::var("SPECTONCR_BUILD_TIME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|t| format!(" &middot; built {t}"))
+        .unwrap_or_default();
+
     // Collect HA status
     let (ha_enabled, ha_local_primary, ha_regions) = match &state.failover_manager {
         Some(fm) => {
@@ -1102,32 +1122,78 @@ pub async fn dashboard_html(State(state): State<DashboardState>) -> Response {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SpectonCR Dashboard</title>
 <style>
+/* Vault-steel + cryptographic-teal design system. Variable NAMES are kept
+   stable because inline styles built in JS reference them (var(--accent)
+   etc.); only their values change. Dual-theme via prefers-color-scheme;
+   the header stays steel in both themes (the signature). */
 :root {{
-    --bg: #0f172a;
-    --surface: #1e293b;
-    --surface2: #334155;
-    --border: #475569;
-    --text: #e2e8f0;
-    --text-muted: #94a3b8;
-    --accent: #38bdf8;
-    --green: #4ade80;
-    --yellow: #fbbf24;
-    --red: #f87171;
-    --purple: #a78bfa;
-    --orange: #fb923c;
-    --teal: #2dd4bf;
+    --steel: #10151c; --steel-line: #2a3340; --steel-ink: #e7ebf1; --steel-ink-dim: #8b95a6;
+    --bg: #f5f7f9;
+    --surface: #ffffff;
+    --surface2: #f1f3f6;
+    --surface3: #e8ecf1;
+    --border: #e3e8ed;
+    --border-strong: #ccd3db;
+    --text: #161a20;
+    --text-muted: #56606e;
+    --text-faint: #79828f;
+    --accent: #157a74;
+    --accent-2: #26948c;
+    --green: #0d8544;
+    --yellow: #b45309;
+    --red: #c81e1e;
+    --purple: #7c3aed;
+    --orange: #ea580c;
+    --teal: #0f766e;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(16,21,28,.04), 0 6px 20px -10px rgba(16,21,28,.12);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}}
+@media (prefers-color-scheme: dark) {{
+    :root {{
+        --bg: #0b0f14;
+        --surface: #12171e;
+        --surface2: #1a2129;
+        --surface3: #222a34;
+        --border: #232c37;
+        --border-strong: #35424f;
+        --text: #e7eaee;
+        --text-muted: #99a3b1;
+        --text-faint: #7a8494;
+        --accent: #43b0a7;
+        --accent-2: #79cdc4;
+        --green: #34d399;
+        --yellow: #fbbf24;
+        --red: #f87171;
+        --purple: #a78bfa;
+        --orange: #fb923c;
+        --teal: #2dd4bf;
+        --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.6);
+    }}
 }}
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: var(--bg); color: var(--text); min-height:100vh; }}
-.header {{ background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display:flex; align-items:center; justify-content:space-between; }}
-.header h1 {{ font-size: 20px; font-weight: 600; }}
-.header h1 span {{ color: var(--accent); }}
-.header .status {{ color: var(--green); font-size: 14px; }}
+html {{ -webkit-text-size-adjust:100%; }}
+body {{ font-family: var(--sans); font-size:14px; line-height:1.5; background: var(--bg); color: var(--text); min-height:100vh; -webkit-font-smoothing:antialiased; }}
+code {{ font-family: var(--mono); }}
+::selection {{ background: var(--accent); color:#fff; }}
+/* Steel header — the signature, steel in both themes */
+.header {{ background: var(--steel); border-bottom: 1px solid var(--steel-line); color: var(--steel-ink); padding: 0 24px; height:60px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:30; }}
+.header .brand {{ display:flex; align-items:center; gap:12px; }}
+.header .brand-mark {{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; font-size:15px; background:linear-gradient(150deg, var(--accent-2), var(--accent)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }}
+.header h1 {{ font-size: 16px; font-weight: 600; letter-spacing:-.01em; color: var(--steel-ink); line-height:1.15; }}
+.header h1 span {{ color: var(--accent-2); }}
+.header h1 small {{ display:block; font-size:10.5px; font-weight:500; letter-spacing:.09em; text-transform:uppercase; color: var(--steel-ink-dim); }}
+.header .status {{ display:inline-flex; align-items:center; gap:7px; color: var(--steel-ink); font-size: 12.5px; background:#1a212b; border:1px solid var(--steel-line); padding:5px 11px; border-radius:99px; }}
+.header .status::before {{ content:""; width:7px; height:7px; border-radius:50%; background:#34d399; box-shadow:0 0 0 3px rgba(52,211,153,.18); }}
 .container {{ max-width: 1400px; margin: 0 auto; padding: 24px; }}
-.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }}
-.card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }}
-.card .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }}
-.card .value {{ font-size: 28px; font-weight: 700; }}
+.subhead {{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--text-faint); margin:0 2px 10px; display:flex; align-items:center; gap:10px; }}
+.subhead::after {{ content:""; flex:1; height:1px; background:var(--border); }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }}
+.card {{ position:relative; overflow:hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 16px 16px; box-shadow: var(--shadow); }}
+.card::before {{ content:""; position:absolute; top:0; left:16px; right:16px; height:2px; background:linear-gradient(90deg, var(--accent-2), transparent 80%); opacity:.7; }}
+.card .label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); font-weight:600; margin-bottom: 6px; }}
+.card .value {{ font-size: 26px; font-weight: 650; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }}
 .card .sub {{ font-size: 11px; color: var(--text-muted); margin-top: 4px; }}
 .card .value.green {{ color: var(--green); }}
 .card .value.accent {{ color: var(--accent); }}
@@ -1143,45 +1209,47 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, mono
 .fill-red {{ background: var(--red); }}
 .fill-accent {{ background: var(--accent); }}
 .fill-orange {{ background: var(--orange); }}
-.section {{ background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; }}
-.section-header {{ padding: 16px 20px; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }}
-.section-header h2 {{ font-size: 16px; font-weight: 600; }}
+.section {{ background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 20px; box-shadow: var(--shadow); overflow:hidden; }}
+.section-header {{ padding: 14px 18px; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }}
+.section-header h2 {{ font-size: 14px; font-weight: 650; letter-spacing:-.01em; }}
 .section-header .controls {{ display:flex; gap:8px; align-items:center; }}
-.section-header select, .section-header input {{ background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 4px; font-size: 13px; }}
+.section-header select, .section-header input {{ background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); padding: 7px 10px; border-radius: 8px; font-size: 13px; font-family:inherit; }}
+input:focus, select:focus {{ outline:none; border-color: var(--accent); }}
 table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-th {{ text-align: left; padding: 10px 16px; color: var(--text-muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }}
-td {{ padding: 10px 16px; border-bottom: 1px solid var(--surface2); }}
+th {{ text-align: left; padding: 10px 16px; background: var(--surface2); color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }}
+td {{ padding: 10px 16px; border-bottom: 1px solid var(--border); }}
+tbody tr:last-child td {{ border-bottom: 0; }}
 tr:hover {{ background: var(--surface2); }}
-.badge {{ padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
-.badge-push {{ background: rgba(74,222,128,0.15); color: var(--green); }}
-.badge-pull {{ background: rgba(56,189,248,0.15); color: var(--accent); }}
-.badge-delete {{ background: rgba(248,113,113,0.15); color: var(--red); }}
-.badge-other {{ background: rgba(167,139,250,0.15); color: var(--purple); }}
-.badge-green {{ background: rgba(74,222,128,0.15); color: var(--green); }}
-.badge-red {{ background: rgba(248,113,113,0.15); color: var(--red); }}
-.footer {{ text-align: center; color: var(--text-muted); font-size: 12px; padding: 16px; }}
-.refresh-btn {{ background: var(--accent); color: var(--bg); border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }}
-.refresh-btn:hover {{ opacity: 0.8; }}
+.badge {{ display:inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; border:1px solid transparent; }}
+.badge-push {{ background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }}
+.badge-pull {{ background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }}
+.badge-delete {{ background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }}
+.badge-other {{ background: color-mix(in srgb, var(--purple) 14%, transparent); color: var(--purple); border-color: color-mix(in srgb, var(--purple) 30%, transparent); }}
+.badge-green {{ background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }}
+.badge-red {{ background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }}
+.footer {{ text-align: center; color: var(--text-faint); font-size: 12px; padding: 20px; }}
+.refresh-btn {{ background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 550; font-family:inherit; transition: background .15s; }}
+.refresh-btn:hover {{ background: var(--accent-2); }}
 .empty {{ text-align: center; padding: 40px; color: var(--text-muted); }}
 .clickable-row {{ cursor: pointer; }}
 .clickable-row:hover {{ background: var(--surface2); }}
 .clickable-row td:first-child::before {{ content: '▸ '; color: var(--accent); font-size: 11px; }}
 .modal-backdrop {{ position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: flex-start; justify-content: center; z-index: 1000; padding: 40px 20px; overflow-y: auto; }}
 .modal-backdrop.open {{ display: flex; }}
-.modal {{ background: var(--bg); border: 1px solid var(--border); border-radius: 8px; max-width: 1200px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }}
-.modal-header {{ padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg); border-radius: 8px 8px 0 0; z-index: 1; }}
+.modal {{ background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-width: 1200px; width: 100%; box-shadow: 0 24px 70px rgba(0,0,0,0.5); }}
+.modal-header {{ padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--surface); border-radius: var(--radius) var(--radius) 0 0; z-index: 1; }}
 .modal-header h2 {{ font-size: 18px; }}
 .modal-header h2 small {{ display: block; font-size: 12px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }}
 .modal-close {{ background: var(--surface2); border: 1px solid var(--border); color: var(--text); width: 32px; height: 32px; border-radius: 4px; cursor: pointer; font-size: 18px; line-height: 1; }}
-.modal-close:hover {{ background: var(--red); color: var(--bg); }}
-.modal-body {{ padding: 20px 24px; }}
-.explainer {{ background: var(--surface); border-left: 3px solid var(--accent); padding: 14px 18px; border-radius: 4px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; color: var(--text); }}
-.detail-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }}
-.detail-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }}
+.modal-close:hover {{ background: var(--red); color: #fff; border-color: var(--red); }}
+.modal-body {{ padding: 20px 22px; }}
+.explainer {{ background: var(--surface2); border-left: 3px solid var(--accent); padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; color: var(--text); }}
+.detail-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }}
+.detail-card {{ background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }}
 .detail-card .label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }}
 .detail-card .value {{ font-size: 22px; font-weight: 700; }}
 .detail-card .sub {{ font-size: 11px; color: var(--text-muted); margin-top: 4px; }}
-.topology {{ background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin-bottom: 20px; overflow-x: auto; }}
+.topology {{ background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; overflow-x: auto; }}
 .topology h3 {{ font-size: 13px; margin-bottom: 4px; }}
 .topology .topology-help {{ font-size: 11px; color: var(--text-muted); margin-bottom: 12px; }}
 .layer-bar {{ margin-bottom: 8px; }}
@@ -1197,44 +1265,26 @@ tr:hover {{ background: var(--surface2); }}
 .matrix th, .matrix td {{ padding: 4px 6px; text-align: center; border: 1px solid var(--surface2); }}
 .matrix th.tag-header {{ writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; vertical-align: bottom; min-height: 80px; padding: 6px 2px; }}
 .matrix th.layer-header {{ text-align: left; font-family: monospace; font-weight: normal; color: var(--text-muted); white-space: nowrap; padding-right: 12px; }}
-.matrix td.cell-on {{ background: var(--green); color: var(--bg); font-weight: 700; }}
-.matrix td.cell-off {{ background: var(--surface); color: var(--surface2); }}
-.matrix td.size-col {{ text-align: right; font-family: monospace; color: var(--text-muted); padding-right: 8px; }}
-.warn-box {{ background: rgba(251,191,36,0.1); border: 1px solid var(--yellow); border-radius: 4px; padding: 12px 14px; margin-bottom: 16px; font-size: 12px; color: var(--yellow); }}
+.matrix td.cell-on {{ background: var(--green); color: #fff; font-weight: 700; }}
+.matrix td.cell-off {{ background: var(--surface); color: var(--text-faint); }}
+.matrix td.size-col {{ text-align: right; font-family: var(--mono); color: var(--text-muted); padding-right: 8px; }}
+.warn-box {{ background: color-mix(in srgb, var(--yellow) 12%, transparent); border: 1px solid color-mix(in srgb, var(--yellow) 35%, transparent); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; font-size: 12px; color: var(--yellow); }}
+@media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; }} }}
 </style>
 </head>
 <body>
 
 <div class="header">
-    <h1><span>Specton</span>CR Registry Dashboard</h1>
-    <div class="status">Healthy &bull; Uptime: {uptime_display}</div>
+    <div class="brand">
+        <span class="brand-mark">&#128737;</span>
+        <h1><span>Specton</span>CR<small>Registry dashboard</small></h1>
+    </div>
+    <div class="status">Uptime {uptime_display}</div>
 </div>
 
 <div class="container">
+    <div class="subhead">Registry activity</div>
     <div class="grid">
-        <div class="card">
-            <div class="label">CPU Usage</div>
-            <div class="value {cpu_color}">{cpu_usage:.1}%</div>
-            <div class="sub">{cpu_count} cores</div>
-            <div class="progress-bar"><div class="fill {cpu_bar_color}" style="width:{cpu_usage:.0}%"></div></div>
-        </div>
-        <div class="card">
-            <div class="label">RAM Usage</div>
-            <div class="value {ram_color}">{ram_used}</div>
-            <div class="sub">{ram_usage_pct:.1}% of {ram_total}</div>
-            <div class="progress-bar"><div class="fill {ram_bar_color}" style="width:{ram_usage_pct:.0}%"></div></div>
-        </div>
-        <div class="card">
-            <div class="label">Disk Available</div>
-            <div class="value {disk_color}">{disk_avail}</div>
-            <div class="sub">{disk_usage_pct:.1}% used</div>
-            <div class="progress-bar"><div class="fill {disk_bar_color}" style="width:{disk_usage_pct:.0}%"></div></div>
-        </div>
-        <div class="card">
-            <div class="label">HA Status</div>
-            <div class="value {ha_color}">{ha_display}</div>
-            <div class="sub">{ha_sub}</div>
-        </div>
         <div class="card">
             <div class="label">Total Pushes</div>
             <div class="value green">{total_pushes}</div>
@@ -1261,7 +1311,32 @@ tr:hover {{ background: var(--surface2); }}
         </div>
     </div>
 
-    {ha_section}
+    <div class="subhead">System health</div>
+    <div class="grid">
+        <div class="card">
+            <div class="label">CPU Usage</div>
+            <div class="value {cpu_color}">{cpu_usage:.1}%</div>
+            <div class="sub">{cpu_count} cores</div>
+            <div class="progress-bar"><div class="fill {cpu_bar_color}" style="width:{cpu_usage:.0}%"></div></div>
+        </div>
+        <div class="card">
+            <div class="label">RAM Usage</div>
+            <div class="value {ram_color}">{ram_used}</div>
+            <div class="sub">{ram_usage_pct:.1}% of {ram_total}</div>
+            <div class="progress-bar"><div class="fill {ram_bar_color}" style="width:{ram_usage_pct:.0}%"></div></div>
+        </div>
+        <div class="card">
+            <div class="label">Disk Available</div>
+            <div class="value {disk_color}">{disk_avail}</div>
+            <div class="sub">{disk_usage_pct:.1}% used</div>
+            <div class="progress-bar"><div class="fill {disk_bar_color}" style="width:{disk_usage_pct:.0}%"></div></div>
+        </div>
+        <div class="card">
+            <div class="label">HA Status</div>
+            <div class="value {ha_color}">{ha_display}</div>
+            <div class="sub">{ha_sub}</div>
+        </div>
+    </div>
 
     <div class="section">
         <div class="section-header">
@@ -1275,6 +1350,8 @@ tr:hover {{ background: var(--surface2); }}
             <div class="empty" id="image-loading">Loading images...</div>
         </div>
     </div>
+
+    {ha_section}
 
     <div class="section">
         <div class="section-header">
@@ -1372,7 +1449,7 @@ tr:hover {{ background: var(--surface2); }}
 </div>
 
 <div class="footer">
-    SpectonCR Registry v{version} (build {build_hash})
+    SpectonCR Registry {version} &middot; build {build_hash}{build_time}
     &mdash; Prometheus endpoint at <a href="/metrics" style="color:var(--accent)">/metrics</a>
     &bull; Auto-refresh: <select onchange="setupAutoRefresh(this.value)" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px;">
         <option value="0">Off</option>
@@ -1723,8 +1800,9 @@ function filterTable() {{
         } else {
             ""
         },
-        version = env!("CARGO_PKG_VERSION"),
-        build_hash = option_env!("SPECTONCR_BUILD_HASH").unwrap_or("dev"),
+        version = version,
+        build_hash = build_hash,
+        build_time = build_time,
     );
 
     (
