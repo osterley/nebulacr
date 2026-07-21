@@ -64,6 +64,12 @@ impl ResilientObjectStore {
             CircuitBreakerCallError::Inner(e) => e,
         }
     }
+
+    /// A NotFound is a healthy "object absent" response from storage, not a
+    /// fault — it must not count toward tripping the circuit breaker.
+    fn is_not_found(err: &object_store::Error) -> bool {
+        matches!(err, object_store::Error::NotFound { .. })
+    }
 }
 
 impl std::fmt::Display for ResilientObjectStore {
@@ -158,15 +164,18 @@ impl ObjectStore for ResilientObjectStore {
 
         let result = self
             .circuit_breaker
-            .call(|| {
-                let inner = inner.clone();
-                let loc = location.clone();
-                self.retry_policy.execute_labeled("get", move || {
+            .call_classified(
+                || {
                     let inner = inner.clone();
-                    let loc = loc.clone();
-                    async move { inner.get(&loc).await }
-                })
-            })
+                    let loc = location.clone();
+                    self.retry_policy.execute_labeled("get", move || {
+                        let inner = inner.clone();
+                        let loc = loc.clone();
+                        async move { inner.get(&loc).await }
+                    })
+                },
+                |e| !Self::is_not_found(e),
+            )
             .await;
 
         record_storage_outcome("get", started, result.is_ok());
@@ -183,17 +192,20 @@ impl ObjectStore for ResilientObjectStore {
 
         let result = self
             .circuit_breaker
-            .call(|| {
-                let inner = inner.clone();
-                let loc = location.clone();
-                let opts = options.clone();
-                self.retry_policy.execute_labeled("get_opts", move || {
+            .call_classified(
+                || {
                     let inner = inner.clone();
-                    let loc = loc.clone();
-                    let opts = opts.clone();
-                    async move { inner.get_opts(&loc, opts).await }
-                })
-            })
+                    let loc = location.clone();
+                    let opts = options.clone();
+                    self.retry_policy.execute_labeled("get_opts", move || {
+                        let inner = inner.clone();
+                        let loc = loc.clone();
+                        let opts = opts.clone();
+                        async move { inner.get_opts(&loc, opts).await }
+                    })
+                },
+                |e| !Self::is_not_found(e),
+            )
             .await;
 
         record_storage_outcome("get_opts", started, result.is_ok());
@@ -210,15 +222,18 @@ impl ObjectStore for ResilientObjectStore {
 
         let result = self
             .circuit_breaker
-            .call(|| {
-                let inner = inner.clone();
-                let loc = location.clone();
-                self.retry_policy.execute_labeled("head", move || {
+            .call_classified(
+                || {
                     let inner = inner.clone();
-                    let loc = loc.clone();
-                    async move { inner.head(&loc).await }
-                })
-            })
+                    let loc = location.clone();
+                    self.retry_policy.execute_labeled("head", move || {
+                        let inner = inner.clone();
+                        let loc = loc.clone();
+                        async move { inner.head(&loc).await }
+                    })
+                },
+                |e| !Self::is_not_found(e),
+            )
             .await;
 
         record_storage_outcome("head", started, result.is_ok());

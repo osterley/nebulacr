@@ -108,6 +108,27 @@ impl CircuitBreaker {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, E>>,
     {
+        // By default every inner error counts as a circuit-breaker failure.
+        self.call_classified(f, |_| true).await
+    }
+
+    /// Like [`CircuitBreaker::call`], but `is_failure` decides which inner
+    /// errors count as circuit-breaker failures. Errors for which it returns
+    /// `false` are treated as successes for breaker health.
+    ///
+    /// This exists so routine "object absent" responses (object_store
+    /// `NotFound`) — which `docker push`/`pull` trigger constantly via HEAD/GET
+    /// existence checks — don't accumulate as storage failures and trip the
+    /// breaker open. A NotFound is a healthy round-trip to storage, not a fault.
+    pub async fn call_classified<F, Fut, T, E>(
+        &self,
+        f: F,
+        is_failure: impl Fn(&E) -> bool,
+    ) -> Result<T, CircuitBreakerCallError<E>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, E>>,
+    {
         // Check if we should allow the call
         {
             let state = self.state.read().await;
@@ -158,10 +179,17 @@ impl CircuitBreaker {
         // Execute the operation
         let result = f().await;
 
-        // Update state based on result
+        // Update state based on result. Errors the caller classifies as
+        // non-failures (e.g. NotFound) count as successes for breaker health.
         match &result {
             Ok(_) => self.record_success().await,
-            Err(_) => self.record_failure().await,
+            Err(e) => {
+                if is_failure(e) {
+                    self.record_failure().await;
+                } else {
+                    self.record_success().await;
+                }
+            }
         }
 
         result.map_err(CircuitBreakerCallError::Inner)
