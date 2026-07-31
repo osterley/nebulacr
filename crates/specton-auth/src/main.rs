@@ -3693,6 +3693,7 @@ async fn main() -> anyhow::Result<()> {
             RegistryConfig::default()
         }
     };
+    config.rate_limit.apply_env_overrides();
 
     // Configure bootstrap admin for development (password: "admin")
     config.auth.bootstrap_admin = Some(BootstrapAdmin {

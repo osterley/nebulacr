@@ -3386,6 +3386,11 @@ async fn main() -> anyhow::Result<()> {
             RegistryConfig::default()
         }
     };
+    let config = {
+        let mut config = config;
+        config.rate_limit.apply_env_overrides();
+        config
+    };
 
     // Initialize tracing
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -3644,6 +3649,7 @@ async fn main() -> anyhow::Result<()> {
     // Rate limiter: default tenant-keyed limiter
     let default_rps = std::num::NonZeroU32::new(config.rate_limit.default_rps)
         .unwrap_or(std::num::NonZeroU32::new(100).unwrap());
+    info!(rps = default_rps.get(), "Per-tenant rate limit configured");
     let default_rate_limiter = Arc::new(RateLimiter::keyed(Quota::per_second(default_rps)));
 
     // Initialize mirror service (pull-through cache)

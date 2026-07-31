@@ -315,6 +315,27 @@ pub struct RateLimitConfig {
     pub token_issue_rpm: u32,
 }
 
+impl RateLimitConfig {
+    /// Apply `SPECTONCR_RATE_LIMIT_*` environment overrides. Kubernetes
+    /// deploys set env vars rather than mounting a `--config` file, and
+    /// these limits are the knobs most often tuned per environment.
+    pub fn apply_env_overrides(&mut self) {
+        if let Some(v) = env_u32("SPECTONCR_RATE_LIMIT_DEFAULT_RPS") {
+            self.default_rps = v;
+        }
+        if let Some(v) = env_u32("SPECTONCR_RATE_LIMIT_IP_RPS") {
+            self.ip_rps = v;
+        }
+        if let Some(v) = env_u32("SPECTONCR_RATE_LIMIT_TOKEN_ISSUE_RPM") {
+            self.token_issue_rpm = v;
+        }
+    }
+}
+
+fn env_u32(name: &str) -> Option<u32> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
 // ── Vault configuration ───────────────────────────────────────────
 
 /// Configuration for HashiCorp Vault integration.
