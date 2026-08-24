@@ -1,0 +1,155 @@
+## SpectonCR Mirror — test (in-cluster HA mirror)
+##
+## Second Helm release (`spectoncr-mirror`) in the test namespace,
+## alongside the primary `spectoncr` release. Serves
+## test-spectoncr-mirror.diytaxreturn.co.uk as a pull-through mirror
+## of the in-cluster primary registry. Shares the primary's
+## spectoncr-jwt-keys and spectoncr-basic-auth secrets so tokens and
+## credentials are interchangeable between primary and mirror.
+
+auth:
+  image:
+    repository: bwalia/spectoncr
+    tag: "latest"
+    pullPolicy: Always
+  replicas: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+registry:
+  image:
+    repository: bwalia/spectoncr
+    tag: "latest"
+    pullPolicy: Always
+  replicas: 1
+  # The primary release owns this env's NodePort; the mirror
+  # is reached via its ingress host only.
+  service:
+    type: ClusterIP
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+autoscaling:
+  auth:
+    enabled: false
+  registry:
+    enabled: false
+
+podDisruptionBudget:
+  auth:
+    enabled: false
+  registry:
+    enabled: false
+
+# The primary release owns the `spectoncr` ServiceAccount.
+serviceAccount:
+  create: true
+  name: spectoncr-mirror
+
+jwt:
+  existingSecret: spectoncr-jwt-keys
+
+ingress:
+  enabled: true
+  className: wslproxy
+  host: test-spectoncr-mirror.diytaxreturn.co.uk
+  annotations:
+    cert-manager.io/cluster-issuer: main-issuer
+    nginx.ingress.kubernetes.io/auth-realm: SpectonCR Mirror — test
+    nginx.ingress.kubernetes.io/auth-secret: spectoncr-basic-auth
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  authPath: /auth
+  registryPath: /v2
+  dashboard:
+    enabled: true
+  metrics:
+    enabled: true
+  security:
+    exposeAllAuthPaths: false
+    exposeGitHubActions: false
+  tls:
+    enabled: true
+    secretName: spectoncr-mirror-tls
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: kube-system
+  monitoringNamespace: monitoring
+  allowedNodeCIDRs:
+    - 10.8.0.0/24
+    - 10.42.0.0/16
+  extraAllowedNamespaces:
+    - github-runners
+    - wslproxy-system
+    - test
+    - ring-exec
+
+# The binary tries upstreams in rendered (alphabetical) order and
+# falls through on 404, so 00-primary sorts first: default-tenant
+# pulls are served from the in-cluster primary registry before any
+# public upstream. A short TTL keeps :latest manifests fresh.
+pullThroughCache:
+  enabled: true
+  defaultUpstream: docker.io
+  ttl: 3600
+  upstreams:
+    00-primary:
+      url: http://spectoncr-registry.test.svc.cluster.local:5000
+      username: ""
+      password: ""
+      existingSecret: ""
+      usernameField: username
+      passwordField: password
+
+# The mirror keeps no state of its own beyond the pull-through cache:
+# no database, no redis, no scanner, no grafana.
+postgres:
+  enabled: false
+redis:
+  enabled: false
+scanner:
+  enabled: false
+grafana:
+  enabled: false
+spectoncrDashboards:
+  enabled: false
+spectoncrGrafanaDatasources:
+  enabled: false
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: prometheus-stack
+  interval: 30s
+  scrapeTimeout: 10s
+
+observability:
+  logFormat: json
+  logLevel: info
+
+# Longhorn (replicated) instead of local-path so the cache volume is
+# not pinned to a single node — the mirror must survive exactly the
+# node failures the primary cannot.
+storage:
+  backend: filesystem
+  filesystem:
+    rootDirectory: /var/lib/spectoncr/data
+    persistence:
+      enabled: true
+      storageClass: longhorn
+      accessMode: ReadWriteOnce
+      size: 20Gi

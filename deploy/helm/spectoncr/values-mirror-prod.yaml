@@ -1,0 +1,163 @@
+## SpectonCR Mirror — prod (in-cluster HA mirror)
+##
+## Second Helm release (`spectoncr-mirror`) in the prod namespace,
+## alongside the primary `spectoncr` release. Serves
+## spectoncr-mirror.diytaxreturn.co.uk.
+##
+## Unlike the non-prod mirrors (pull-through caches), the prod mirror
+## reads the SAME S3 bucket as the primary (via the shared
+## spectoncr-s3-credentials secret), so it serves identical content
+## with zero replication lag and is fully stateless.
+##
+## Deliberately NOT pinned to the manchester edge nodes the primary
+## runs on (cloud001/cloud002) — the mirror schedules on the home
+## region workers so it survives an edge/cloud outage.
+
+auth:
+  image:
+    repository: bwalia/spectoncr
+    tag: "latest"
+    pullPolicy: Always
+  replicas: 2
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+registry:
+  image:
+    repository: bwalia/spectoncr
+    tag: "latest"
+    pullPolicy: Always
+  # Stateless on shared S3 — safe to run more than one.
+  replicas: 2
+  service:
+    type: ClusterIP
+  resources:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+    requests:
+      cpu: 300m
+      memory: 512Mi
+  tmpSizeLimit: 4Gi
+
+autoscaling:
+  auth:
+    enabled: false
+  registry:
+    enabled: false
+
+podDisruptionBudget:
+  auth:
+    enabled: true
+    minAvailable: 1
+  registry:
+    enabled: true
+    minAvailable: 1
+
+# The primary release owns the `spectoncr` ServiceAccount.
+serviceAccount:
+  create: true
+  name: spectoncr-mirror
+
+jwt:
+  existingSecret: spectoncr-jwt-keys
+
+ingress:
+  enabled: true
+  className: wslproxy
+  host: spectoncr-mirror.diytaxreturn.co.uk
+  annotations:
+    cert-manager.io/cluster-issuer: main-issuer
+    nginx.ingress.kubernetes.io/auth-realm: SpectonCR Mirror — prod
+    nginx.ingress.kubernetes.io/auth-secret: spectoncr-basic-auth
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  authPath: /auth
+  registryPath: /v2
+  dashboard:
+    enabled: true
+  metrics:
+    enabled: true
+  security:
+    exposeAllAuthPaths: false
+    exposeGitHubActions: false
+  tls:
+    enabled: true
+    secretName: spectoncr-mirror-tls
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: wslproxy-system
+  monitoringNamespace: monitoring
+  allowedNodeCIDRs:
+    - cidr: 10.8.0.0/24
+      except:
+        - 10.8.0.1/32
+        - 10.8.0.3/32
+        - 10.8.0.9/32
+        - 10.8.0.11/32
+        - 10.8.0.12/32
+        - 10.8.0.13/32
+        - 10.8.0.15/32
+        - 10.8.0.17/32
+    - 10.42.0.0/16
+  extraAllowedNamespaces:
+    - github-runners
+    - prod
+    - ring-exec
+
+# Same behaviour as the primary: unprefixed cache misses go to Docker
+# Hub. Everything pushed to the primary is already visible through the
+# shared S3 bucket, so no primary upstream is needed.
+pullThroughCache:
+  enabled: true
+  defaultUpstream: docker.io
+  ttl: 86400
+
+# The mirror keeps no state of its own: no database, no redis, no
+# scanner, no grafana.
+postgres:
+  enabled: false
+redis:
+  enabled: false
+scanner:
+  enabled: false
+grafana:
+  enabled: false
+spectoncrDashboards:
+  enabled: false
+spectoncrGrafanaDatasources:
+  enabled: false
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: prometheus-stack
+  interval: 30s
+  scrapeTimeout: 10s
+
+observability:
+  logFormat: json
+  logLevel: info
+
+# Shared with the primary prod release — same bucket, same secret.
+storage:
+  backend: s3
+  s3:
+    bucket: diytaxreturn-spectoncr-prod
+    region: eu-west-2
+    endpoint: ""
+    existingSecret: spectoncr-s3-credentials
+    accessKeyField: access-key
+    secretKeyField: secret-key
+    pathStyle: false
+    encrypt: true
+    sseAlgorithm: AES256
